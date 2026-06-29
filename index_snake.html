@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>贪吃蛇 — 优化版（炸弹生命周期 & 单一方向控件）</title>
+<style>
+  :root{
+    --bg:#071320;
+    --panel:#0f1720;
+    --accent:#16a34a;
+    --text:#e6eef3;
+    --grid-line: rgba(255,255,255,0.04);
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+  .wrap{max-width:920px;margin:10px auto;padding:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:10px;box-shadow:0 6px 30px rgba(0,0,0,0.6);}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;flex-wrap:wrap;}
+  header h1{font-size:16px;margin:0;color:var(--text);}
+  .controls-top{display:flex;gap:8px;align-items:center;}
+  .controls-top select, .controls-top button{padding:8px 10px;border-radius:6px;border:none;background:#0b1220;color:var(--text);cursor:pointer;}
+  main{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;}
+  .game-area{background:#02060a;border-radius:8px;padding:8px;flex:1 1 420px;display:flex;flex-direction:column;align-items:center;min-width:260px;}
+  .canvas-wrap{width:100%;max-width:640px;display:flex;justify-content:center;}
+  canvas{background:#041020;border-radius:6px;display:block;touch-action:none;max-width:100%;height:auto;}
+  .side{width:300px;flex:0 0 300px;}
+  .panel{background:var(--panel);padding:10px;border-radius:8px;color:var(--text);box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);}
+  .btn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px;}
+  .dir-btn{padding:10px;border-radius:6px;background:#082027;border:1px solid rgba(255,255,255,0.02);color:var(--text);cursor:pointer;user-select:none;text-align:center;}
+  .dir-btn:active{transform:translateY(1px);}
+  .small{font-size:13px;color:#99a3ad;}
+  .foods{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+  .food-sample{width:44px;height:44px;border-radius:6px;background:#06131a;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,0.02);}
+  .row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;}
+  footer{margin-top:10px;font-size:12px;color:#9aa7b3;text-align:center;}
+  @media (max-width:820px){
+    main{flex-direction:column;}
+    .side{width:100%;flex-basis:auto;}
+    .game-area{order:0;}
+  }
+  /* 在窄屏下将方向按钮显示在画布下方 (单一组) */
+  .ops-under-canvas{display:none;margin-top:10px;gap:8px;align-items:center;}
+  @media (max-width:520px){
+    .ops-under-canvas{display:flex;flex-direction:column;}
+    .dir-mobile{display:flex;justify-content:center;gap:8px;}
+    .dir-mobile .dir-btn{min-width:56px;}
+  }
+  .score{font-size:18px;font-weight:700;color:var(--accent);}
+  input[type="file"]{display:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>贪吃蛇（优化版）</h1>
+    <div class="controls-top">
+      <div>速度：
+        <select id="speedSelect" title="选择速度">
+          <option value="1">慢</option>
+          <option value="2" selected>中</option>
+          <option value="3">快</option>
+        </select>
+      </div>
+      <button id="pauseBtn">暂停</button>
+      <div class="score">分数：<span id="score">0</span></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="game-area">
+      <div class="canvas-wrap">
+        <canvas id="gameCanvas" width="480" height="360" aria-label="贪吃蛇画布"></canvas>
+      </div>
+
+      <!-- 单一方向控件：在窄屏下显示在画布下方；桌面也可通过点击使用（但只有一个控件组） -->
+      <div class="ops-under-canvas" id="opsUnder">
+        <div class="dir-mobile">
+          <button class="dir-btn" data-dir="up">↑</button>
+        </div>
+        <div class="dir-mobile">
+          <button class="dir-btn" data-dir="left">←</button>
+          <button class="dir-btn" data-dir="down">↓</button>
+          <button class="dir-btn" data-dir="right">→</button>
+        </div>
+      </div>
+
+      <div class="small" style="margin-top:8px;color:#9aa7b3">提示：使用实体键盘方向键或下方按键控制。撞墙会穿越到另一边。</div>
+    </div>
+
+    <aside class="side">
+      <div class="panel">
+        <div><strong>操作（实体键盘/触屏）</strong></div>
+        <!-- 只保留一组方向按钮在侧栏（桌面可点击） -->
+        <div class="btn-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px;">
+          <div></div>
+          <button class="dir-btn" data-dir="up">↑</button>
+          <div></div>
+          <button class="dir-btn" data-dir="left">←</button>
+          <button class="dir-btn" data-dir="down">↓</button>
+          <button class="dir-btn" data-dir="right">→</button>
+        </div>
+
+        <div style="margin-top:12px;"><strong>食物（示例 & 可替换）</strong></div>
+        <div class="foods" id="foodSamples"></div>
+
+        <div style="margin-top:10px;"><strong>自定义接口</strong></div>
+        <div class="row small">
+          <label class="dir-btn" id="uploadHeadBtn">上传蛇头图片</label>
+          <input type="file" id="headFile" accept="image/*">
+          <button id="resetHead" class="dir-btn">恢复默认</button>
+        </div>
+        <div class="row small">
+          <label class="dir-btn" id="uploadFoodBtn">上传 SVG（替第1种）</label>
+          <input type="file" id="foodFile" accept=".svg,image/svg+xml">
+        </div>
+        <div class="small" style="margin-top:10px;color:#9aa7b3">
+          - 两个食物随机出现（不会同时出现两个炸弹）。<br>
+          - 钻石得 2 分；其余食物得 1 分；炸弹会立刻结束游戏。<br>
+          - 若本次吃到的是非炸弹，而场上存在炸弹，则炸弹会在吃完后消失并重新随机生成两种食物。
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>示例实现 — 可继续按需微调。作者：AI 示例。</footer>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d', {alpha:false});
+  const container = canvas.parentElement;
+  const scoreEl = document.getElementById('score');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const speedSelect = document.getElementById('speedSelect');
+  const dirButtons = document.querySelectorAll('.dir-btn[data-dir]');
+  const foodSamplesEl = document.getElementById('foodSamples');
+  const opsUnder = document.getElementById('opsUnder');
+
+  // 基准与状态
+  const BASE_GRID = 20;
+  let GRID = BASE_GRID, COLS = 24, ROWS = 18;
+  let snake = [], dir = {x:1,y:0}, nextDir = {...dir};
+  let speedLevel = 2;
+  const speedMap = {1:6, 2:10, 3:16};
+  let frameCount = 0, paused = false, score = 0;
+  const foodsCount = 2;
+  let foods = [];
+  let customHeadImg = null;
+
+  // 食物定义（新增 score 属性： diamond=2, others=1, bomb ends game）
+  const foodsInfo = [
+    {id:0, name:'苹果', type:'normal', score:1, color:'#ff4d4d', svg:null, _img:null},
+    {id:1, name:'香蕉', type:'normal', score:1, color:'#ffb84d', svg:null, _img:null},
+    {id:2, name:'钻石', type:'diamond', score:2, color:'#8ce6ff', svg:null, _img:null},
+    {id:3, name:'樱桃', type:'normal', score:1, color:'#ff6699', svg:null, _img:null},
+    {id:4, name:'炸弹', type:'bomb', score:0, color:'#333333', svg:null, _img:null},
+    {id:5, name:'葡萄', type:'normal', score:1, color:'#a366ff', svg:null, _img:null}
+  ];
+
+  // 默认 SVGs
+  function defaultFoodSvgs(){
+    return foodsInfo.map((f)=>{
+      if(f.type === 'bomb'){
+        return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="36" r="16" fill="${f.color}"/><path d="M38 16 L46 8" stroke="#ffdb4d" stroke-width="3" stroke-linecap="round"/></svg>`;
+      } else if(f.type === 'diamond'){
+        return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><polygon points="32,8 52,32 32,56 12,32" fill="${f.color}" /></svg>`;
+      } else {
+        return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="18" fill="${f.color}" /></svg>`;
+      }
+    });
+  }
+  const defaultSvgs = defaultFoodSvgs();
+  for(let i=0;i<foodsInfo.length;i++) foodsInfo[i].svg = defaultSvgs[i];
+
+  // SVG -> Image 缓存
+  function ensureFoodImages(){
+    foodsInfo.forEach(k=>{
+      if(!k.svg) return;
+      try{
+        const svg64 = btoa(unescape(encodeURIComponent(k.svg)));
+        const src = 'data:image/svg+xml;base64,' + svg64;
+        if(!k._img || k._img.src !== src){
+          const im = new Image();
+          im.src = src;
+          k._img = im;
+        }
+      }catch(e){
+        k._img = null;
+      }
+    });
+  }
+  ensureFoodImages();
+
+  // 文件上传 UI
+  const headFileInput = document.getElementById('headFile');
+  const uploadHeadBtn = document.getElementById('uploadHeadBtn');
+  const resetHeadBtn = document.getElementById('resetHead');
+  const foodFileInput = document.getElementById('foodFile');
+  const uploadFoodBtn = document.getElementById('uploadFoodBtn');
+
+  uploadHeadBtn.addEventListener('click', ()=> headFileInput.click());
+  headFileInput.addEventListener('change', e=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    const img = new Image();
+    img.onload = ()=> { customHeadImg = img; headFileInput.value=''; };
+    img.onerror = ()=> { alert('无法读取图片'); headFileInput.value=''; };
+    img.src = URL.createObjectURL(f);
+  });
+  resetHeadBtn.addEventListener('click', ()=> { customHeadImg = null; });
+
+  uploadFoodBtn.addEventListener('click', ()=> foodFileInput.click());
+  foodFileInput.addEventListener('change', e=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      const text = ev.target.result;
+      setFoodSvg(0, text);
+      foodFileInput.value='';
+      renderFoodSamples();
+      ensureFoodImages();
+    };
+    reader.readAsText(f);
+  });
+
+  function setFoodSvg(index, svgText){
+    if(index<0||index>=foodsInfo.length) return;
+    foodsInfo[index].svg = svgText;
+    try{
+      const svg64 = btoa(unescape(encodeURIComponent(svgText)));
+      foodsInfo[index]._img = new Image();
+      foodsInfo[index]._img.src = 'data:image/svg+xml;base64,' + svg64;
+    }catch(e){
+      foodsInfo[index]._img = null;
+    }
+  }
+
+  function renderFoodSamples(){
+    foodSamplesEl.innerHTML = '';
+    foodsInfo.forEach((f,i)=>{
+      const div = document.createElement('div');
+      div.className = 'food-sample';
+      div.title = `${f.name} (${f.type})`;
+      const wrapper = document.createElement('div');
+      wrapper.style.width='36px'; wrapper.style.height='36px'; wrapper.style.display='inline-block';
+      wrapper.innerHTML = f.svg || '';
+      const svgEl = wrapper.querySelector('svg');
+      if(svgEl){ svgEl.setAttribute('width','36'); svgEl.setAttribute('height','36'); }
+      div.appendChild(wrapper);
+      foodSamplesEl.appendChild(div);
+    });
+  }
+  renderFoodSamples();
+
+  // 自适应画布
+  function resizeCanvasToFit(){
+    const maxWidth = container.clientWidth;
+    const maxHeight = Math.min(window.innerHeight * 0.6, 640);
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    let targetGrid = BASE_GRID;
+    if(maxWidth < 380) targetGrid = Math.max(12, BASE_GRID - 6);
+    else if(maxWidth < 520) targetGrid = Math.max(14, BASE_GRID - 4);
+    else targetGrid = BASE_GRID;
+    GRID = targetGrid;
+    COLS = Math.floor(maxWidth / GRID); if(COLS < 12) COLS = 12;
+    ROWS = Math.floor(maxHeight / GRID); if(ROWS < 10) ROWS = 10;
+    const w = COLS * GRID; const h = ROWS * GRID;
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  // 随机工具
+  function randInt(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+  function randomFoodKind(){ return foodsInfo[randInt(0, foodsInfo.length-1)]; }
+
+  // 生成食物（保证互不重叠、不与蛇重叠）
+  function generateFoodAtRandomPos(kind){
+    let tries = 0;
+    while(tries < 1000){
+      const pos = {x: randInt(0, COLS-1), y: randInt(0, ROWS-1)};
+      if(snake.some(s=>s.x===pos.x && s.y===pos.y)) { tries++; continue; }
+      if(foods.some(f=>f.pos.x===pos.x && f.pos.y===pos.y)) { tries++; continue; }
+      return {pos, kind};
+    }
+    return {pos:{x:0,y:0}, kind};
+  }
+
+  // 初始化食物：确保同时存在两个，且不会同时是炸弹
+  function placeInitialFoods(){
+    foods = [];
+    let firstKind = randomFoodKind();
+    foods.push(generateFoodAtRandomPos(firstKind));
+    let secondKind = randomFoodKind();
+    if(firstKind.type === 'bomb' && secondKind.type === 'bomb'){
+      const nonBombKinds = foodsInfo.filter(k=>k.type !== 'bomb');
+      secondKind = nonBombKinds[randInt(0, nonBombKinds.length-1)];
+    }
+    foods.push(generateFoodAtRandomPos(secondKind));
+  }
+
+  // 游戏初始化/重置
+  function resetGame(){
+    snake = [];
+    const startX = Math.floor(COLS/2), startY = Math.floor(ROWS/2);
+    for(let i=0;i<6;i++) snake.push({x:startX - i, y:startY});
+    dir = {x:1,y:0}; nextDir = {...dir};
+    score = 0; frameCount = 0; paused = false;
+    placeInitialFoods();
+    scoreEl.textContent = score;
+    pauseBtn.textContent = '暂停';
+  }
+
+  // 游戏步进：注意处理炸弹消失规则
+  function step(){
+    if(paused) return;
+    frameCount++;
+    const requiredFrames = Math.max(1, Math.floor(60 / speedMap[speedLevel]));
+    if(frameCount % requiredFrames !== 0) return;
+
+    if(!(nextDir.x === -dir.x && nextDir.y === -dir.y)) dir = {...nextDir};
+
+    let newHead = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+    if(newHead.x < 0) newHead.x = COLS - 1;
+    if(newHead.x >= COLS) newHead.x = 0;
+    if(newHead.y < 0) newHead.y = ROWS - 1;
+    if(newHead.y >= ROWS) newHead.y = 0;
+
+    const hitSelf = snake.some((s, idx) => idx !== snake.length-1 && s.x===newHead.x && s.y===newHead.y);
+    if(hitSelf){ gameOver(); return; }
+
+    snake.unshift(newHead);
+
+    const ateIndex = foods.findIndex(f => f.pos.x===newHead.x && f.pos.y===newHead.y);
+    if(ateIndex !== -1){
+      const f = foods[ateIndex];
+      if(f.kind.type === 'bomb'){ gameOver(true); return; }
+      else {
+        // 非炸弹：增加分数（diamond=2，其余=1）
+        score += (f.kind.score || 1);
+        // 移除吃掉的食物
+        foods.splice(ateIndex, 1);
+        // 关键行为：如果场上有炸弹（没被吃中），在吃完非炸弹后，炸弹应立即消失并重新随机生成两种食物
+        const bombPresent = foods.some(ff => ff.kind.type === 'bomb');
+        if(bombPresent){
+          // 移除所有炸弹
+          foods = foods.filter(ff => ff.kind.type !== 'bomb');
+          // 现在 foods.length 可能是 0 or 1; 重新生成直到达到 foodsCount，且遵守"不同时出现两个炸弹"
+          while(foods.length < foodsCount){
+            let newKind = randomFoodKind();
+            const hasBombNow = foods.some(ff=>ff.kind.type === 'bomb');
+            if(hasBombNow && newKind.type === 'bomb'){
+              const nonBombKinds = foodsInfo.filter(k=>k.type !== 'bomb');
+              newKind = nonBombKinds[randInt(0, nonBombKinds.length-1)];
+            }
+            foods.push(generateFoodAtRandomPos(newKind));
+          }
+        } else {
+          // 没有炸弹残留：常规补一个新食物（保持不会导致两炸弹）
+          let newKind = randomFoodKind();
+          const hasBombNow = foods.some(ff=>ff.kind.type === 'bomb');
+          if(hasBombNow && newKind.type === 'bomb'){
+            const nonBombKinds = foodsInfo.filter(k=>k.type !== 'bomb');
+            newKind = nonBombKinds[randInt(0, nonBombKinds.length-1)];
+          }
+          foods.push(generateFoodAtRandomPos(newKind));
+        }
+      }
+    } else {
+      // 未吃到，移除尾部
+      snake.pop();
+    }
+
+    scoreEl.textContent = score;
+  }
+
+  function gameOver(isBomb=false){
+    paused = true;
+    pauseBtn.textContent = '已暂停';
+    setTimeout(()=> {
+      const msg = isBomb ? '你吃到了炸弹！游戏结束。重新开始？' : '游戏结束（撞到身体）。重新开始？';
+      if(confirm(msg)){ resetGame(); }
+      else { paused = true; }
+    }, 30);
+  }
+
+  // 绘制
+  function draw(){
+    ctx.fillStyle = '#041022'; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // 绘制浅色格线（仅线）
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid-line') || 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for(let i=0;i<=COLS;i++){
+      const x = i * GRID + 0.5;
+      ctx.moveTo(x, 0); ctx.lineTo(x, ROWS * GRID);
+    }
+    for(let j=0;j<=ROWS;j++){
+      const y = j * GRID + 0.5;
+      ctx.moveTo(0, y); ctx.lineTo(COLS * GRID, y);
+    }
+    ctx.stroke();
+
+    // 食物
+    for(const f of foods) drawFood(f);
+
+    // 蛇
+    drawSnake();
+  }
+
+  function drawFood(f){
+    const px = f.pos.x * GRID + GRID/2;
+    const py = f.pos.y * GRID + GRID/2;
+    const size = GRID * 0.8;
+    const kind = f.kind;
+    if(kind._img && kind._img.complete && kind._img.naturalWidth){
+      ctx.save(); ctx.translate(px - size/2, py - size/2);
+      ctx.drawImage(kind._img, 0, 0, size, size); ctx.restore();
+    } else {
+      ctx.fillStyle = kind.color || '#fff';
+      ctx.beginPath(); ctx.arc(px, py, size/2, 0, Math.PI*2); ctx.fill();
+    }
+    if(kind.type === 'bomb'){
+      ctx.strokeStyle = 'rgba(255,80,80,0.9)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(px,py, size/2+2, 0, Math.PI*2); ctx.stroke();
+    } else if(kind.type === 'diamond'){
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(px,py, size/2+1, 0, Math.PI*2); ctx.stroke();
+    }
+  }
+
+  function drawSnake(){
+    if(!snake.length) return;
+    const head = snake[0];
+    const hx = head.x * GRID;
+    const hy = head.y * GRID;
+    if(customHeadImg && customHeadImg.complete && customHeadImg.naturalWidth){
+      const img = customHeadImg;
+      const targetSize = GRID * 0.95;
+      let dw = targetSize, dh = targetSize;
+      const iw = img.width, ih = img.height;
+      if(iw > ih) dh = targetSize * ih/iw; else dw = targetSize * iw/ih;
+      ctx.save(); ctx.translate(hx + GRID/2 - dw/2, hy + GRID/2 - dh/2);
+      ctx.drawImage(img, 0, 0, dw, dh); ctx.restore();
+    } else {
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(hx + GRID*0.1, hy + GRID*0.1, GRID*0.8, GRID*0.8);
+    }
+    const baseColor = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#16a34a';
+    for(let i=1;i<snake.length;i++){
+      const seg = snake[i];
+      const px = seg.x * GRID + GRID/2;
+      const py = seg.y * GRID + GRID/2;
+      const t = i / Math.max(1, snake.length - 1);
+      const r = GRID * (0.45 - 0.25 * t);
+      const col = shadeColorPercent(baseColor, -20 * t);
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(px,py, Math.max(2,r), 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  function shadeColorPercent(hexColor, percent){
+    const c = document.createElement('canvas').getContext('2d');
+    c.fillStyle = hexColor;
+    c.fillRect(0,0,1,1);
+    const d = c.getImageData(0,0,1,1).data;
+    let [r,g,b] = [d[0],d[1],d[2]];
+    r = Math.min(255, Math.max(0, r + (percent/100)*255));
+    g = Math.min(255, Math.max(0, g + (percent/100)*255));
+    b = Math.min(255, Math.max(0, b + (percent/100)*255));
+    return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+  }
+
+  // 主循环
+  function loop(){
+    step(); draw(); requestAnimationFrame(loop);
+  }
+
+  // 交互绑定（仅一组方向按钮）
+  pauseBtn.addEventListener('click', ()=> { paused = !paused; pauseBtn.textContent = paused ? '继续' : '暂停'; });
+  speedSelect.addEventListener('change', e=> { speedLevel = parseInt(e.target.value,10); });
+  dirButtons.forEach(b=> b.addEventListener('click', ()=> changeDirection(b.getAttribute('data-dir'))));
+  // 触屏下若 opsUnder 在视图中，也能用
+  const mobileDirBtns = opsUnder.querySelectorAll('.dir-btn');
+  mobileDirBtns.forEach(b=> b.addEventListener('click', ()=> changeDirection(b.getAttribute('data-dir'))));
+
+  window.addEventListener('keydown', (e)=>{
+    const key = e.key;
+    if(key === 'ArrowUp') { changeDirection('up'); e.preventDefault(); }
+    else if(key === 'ArrowDown') { changeDirection('down'); e.preventDefault(); }
+    else if(key === 'ArrowLeft') { changeDirection('left'); e.preventDefault(); }
+    else if(key === 'ArrowRight') { changeDirection('right'); e.preventDefault(); }
+    else if(key === ' '){ paused = !paused; pauseBtn.textContent = paused ? '继续' : '暂停'; e.preventDefault(); }
+  });
+
+  function changeDirection(name){
+    const map = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} };
+    const nd = map[name];
+    if(!nd) return;
+    if(nd.x === -dir.x && nd.y === -dir.y) return;
+    nextDir = nd;
+  }
+
+  // 窗口改变时重算
+  function onResize(){
+    resizeCanvasToFit();
+    ensureFoodImages();
+    snake.forEach(s=>{
+      if(s.x >= COLS) s.x = COLS - 1;
+      if(s.y >= ROWS) s.y = ROWS - 1;
+    });
+    foods = foods.map(f=>{
+      if(f.pos.x >= COLS || f.pos.y >= ROWS) return generateFoodAtRandomPos(randomFoodKind());
+      return f;
+    });
+  }
+  window.addEventListener('resize', ()=> onResize());
+
+  // 启动
+  onResize();
+  resetGame();
+  requestAnimationFrame(loop);
+
+  // 暴露 API
+  window.snakeGameAPI = {
+    setFoodSvg: (i,svg)=> { setFoodSvg(i,svg); renderFoodSamples(); ensureFoodImages(); },
+    setCustomHeadImage: (img)=> { customHeadImg = img; },
+    resetGame,
+    getState: ()=>({snake: JSON.parse(JSON.stringify(snake)), foods: JSON.parse(JSON.stringify(foods)), score})
+  };
+
+})();
+</script>
